@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+<meta charset="UTF-8">
+<title>Control 3D con Gestos</title>
+
+<style>
+
+body{
+margin:0;
+overflow:hidden;
+background:#111;
+color:white;
+font-family:sans-serif;
+}
+
+#input_video,#output_canvas{
+position:absolute;
+width:320px;
+height:240px;
+right:20px;
+bottom:20px;
+transform:scaleX(-1);
+}
+
+#output_canvas{z-index:2;}
+
+#status{
+position:absolute;
+top:20px;
+left:20px;
+background:rgba(0,0,0,0.7);
+padding:12px;
+border-radius:8px;
+font-size:14px;
+}
+
+#gesture-panel{
+position:absolute;
+top:70px;
+left:20px;
+background:rgba(0,0,0,0.82);
+border:1px solid #333;
+border-radius:12px;
+padding:14px 16px;
+width:230px;
+font-size:12px;
+z-index:10;
+}
+
+#gesture-panel h3{
+margin:0 0 12px;
+font-size:13px;
+color:#fff;
+letter-spacing:1px;
+text-transform:uppercase;
+border-bottom:1px solid #333;
+padding-bottom:8px;
+}
+
+.section-title{
+color:#888;
+font-size:10px;
+text-transform:uppercase;
+letter-spacing:2px;
+margin:10px 0 6px;
+}
+
+.gesture-row{
+display:flex;
+align-items:center;
+gap:10px;
+margin-bottom:7px;
+}
+
+.gesture-icon{
+font-size:22px;
+width:32px;
+text-align:center;
+flex-shrink:0;
+}
+
+.gesture-info{
+display:flex;
+flex-direction:column;
+gap:2px;
+}
+
+.gesture-name{
+color:#fff;
+font-size:12px;
+font-weight:600;
+}
+
+.gesture-desc{
+color:#888;
+font-size:11px;
+}
+
+.divider{
+border:none;
+border-top:1px solid #222;
+margin:8px 0;
+}
+
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+</head>
+
+<body>
+
+<div id="status">Esperando gesto...</div>
+
+<div id="gesture-panel">
+  <h3>🖐 Gestos</h3>
+
+  <div class="section-title">Crear figura</div>
+
+  <div class="gesture-row">
+    <div class="gesture-icon">☝️</div>
+    <div class="gesture-info">
+      <span class="gesture-name">Esfera</span>
+      <span class="gesture-desc">1 dedo (índice)</span>
+    </div>
+  </div>
+
+  <div class="gesture-row">
+    <div class="gesture-icon">✌️</div>
+    <div class="gesture-info">
+      <span class="gesture-name">Cubo</span>
+      <span class="gesture-desc">2 dedos (índice + medio)</span>
+    </div>
+  </div>
+
+  <div class="gesture-row">
+    <div class="gesture-icon">🤟</div>
+    <div class="gesture-info">
+      <span class="gesture-name">Cono</span>
+      <span class="gesture-desc">3 dedos arriba</span>
+    </div>
+  </div>
+
+  <div class="gesture-row">
+    <div class="gesture-icon">👍</div>
+    <div class="gesture-info">
+      <span class="gesture-name">Cilindro</span>
+      <span class="gesture-desc">Pulgar arriba + puño</span>
+    </div>
+  </div>
+
+  <hr class="divider">
+  <div class="section-title">Controlar figura</div>
+
+  <div class="gesture-row">
+    <div class="gesture-icon">☝️</div>
+    <div class="gesture-info">
+      <span class="gesture-name">Mover</span>
+      <span class="gesture-desc">Solo índice, arrastra</span>
+    </div>
+  </div>
+
+  <div class="gesture-row">
+    <div class="gesture-icon">🖐</div>
+    <div class="gesture-info">
+      <span class="gesture-name">Rotar</span>
+      <span class="gesture-desc">Palma abierta, arrastra</span>
+    </div>
+  </div>
+
+  <div class="gesture-row">
+    <div class="gesture-icon">🖐</div>
+    <div class="gesture-info">
+      <span class="gesture-name">Zoom IN</span>
+      <span class="gesture-desc">Palma abierta quieta</span>
+    </div>
+  </div>
+
+  <div class="gesture-row">
+    <div class="gesture-icon">🤏</div>
+    <div class="gesture-info">
+      <span class="gesture-name">Zoom OUT</span>
+      <span class="gesture-desc">Dedos juntos/pinza</span>
+    </div>
+  </div>
+
+  <div class="gesture-row">
+    <div class="gesture-icon">✊</div>
+    <div class="gesture-info">
+      <span class="gesture-name">Eliminar</span>
+      <span class="gesture-desc">Puño cerrado (espera 5s)</span>
+    </div>
+  </div>
+
+</div>
+
+<video id="input_video"></video>
+<canvas id="output_canvas" width="320" height="240"></canvas>
+
+<script>
+
+const status = document.getElementById("status")
+let lastStatusText = ""
+function setStatus(msg){
+  if(msg !== lastStatusText){
+    status.innerHTML = msg
+    lastStatusText = msg
+  }
+}
+
+// ---------------- THREE ----------------
+
+const scene = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000)
+camera.position.z = 5
+
+const renderer = new THREE.WebGLRenderer({ alpha: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+document.body.appendChild(renderer.domElement)
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(window.innerWidth, window.innerHeight)
+})
+
+const light = new THREE.PointLight(0xffffff, 1)
+light.position.set(5, 5, 5)
+scene.add(light)
+
+let currentObject  = null
+let figureCreated  = false
+let zoomLevel      = 5
+let creationTime   = 0
+const DELETE_DELAY = 5000
+let lastDeleteTime = 0
+const CREATE_DELAY = 4000
+
+let lastIndexX = null
+let lastIndexY = null
+let lastPalmX  = null
+let lastPalmY  = null
+
+let autoRotate        = true
+let autoRotateTimeout = null
+
+// ---------------- CREAR FIGURA ----------------
+
+function createShape(type){
+  if(figureCreated) return
+  let geometry
+  if(type === "cube")     geometry = new THREE.BoxGeometry(2, 2, 2)
+  if(type === "sphere")   geometry = new THREE.SphereGeometry(1.2, 32, 32)
+  if(type === "cone")     geometry = new THREE.ConeGeometry(1, 2, 32)
+  if(type === "cylinder") geometry = new THREE.CylinderGeometry(1, 1, 2, 32)
+  const material = new THREE.MeshNormalMaterial({ wireframe: true })
+  currentObject  = new THREE.Mesh(geometry, material)
+  scene.add(currentObject)
+  figureCreated = true
+  creationTime  = Date.now()
+  zoomLevel     = 5
+  camera.position.z = zoomLevel
+  autoRotate = true
+}
+
+// ---------------- ANIMACIÓN ----------------
+
+function animate(){
+  requestAnimationFrame(animate)
+  if(currentObject && autoRotate){
+    currentObject.rotation.y += 0.004
+    currentObject.rotation.x += 0.002
+  }
+  renderer.render(scene, camera)
+}
+animate()
+
+// ---------------- MEDIAPIPE ----------------
+
+const videoElement  = document.getElementById("input_video")
+const canvasElement = document.getElementById("output_canvas")
+const canvasCtx     = canvasElement.getContext("2d")
+
+function dist(a, b){
+  return Math.sqrt(Math.pow(a.x-b.x,2)+Math.pow(a.y-b.y,2))
+}
+
+function detectGesture(landmarks){
+
+  const thumbTip  = landmarks[4],  thumbIp   = landmarks[3]
+  const indexTip  = landmarks[8],  indexPip  = landmarks[5]
+  const middleTip = landmarks[12], middlePip = landmarks[9]
+  const ringTip   = landmarks[16], ringPip   = landmarks[13]
+  const pinkyTip  = landmarks[20], pinkyPip  = landmarks[17]
+  const palmBase  = landmarks[9]
+
+  const isFingerUp = (tip, pip) => tip.y < pip.y
+
+  const thumbUp  = thumbTip.x < thumbIp.x
+  const indexUp  = isFingerUp(indexTip,  indexPip)
+  const middleUp = isFingerUp(middleTip, middlePip)
+  const ringUp   = isFingerUp(ringTip,   ringPip)
+  const pinkyUp  = isFingerUp(pinkyTip,  pinkyPip)
+
+  let fingersUp = 0
+  if(indexUp)  fingersUp++
+  if(middleUp) fingersUp++
+  if(ringUp)   fingersUp++
+  if(pinkyUp)  fingersUp++
+
+  const currentIndexX = indexTip.x
+  const currentIndexY = indexTip.y
+  const currentPalmX  = palmBase.x
+  const currentPalmY  = palmBase.y
+
+  const d1 = dist(indexTip, middleTip)
+  const d2 = dist(middleTip, ringTip)
+  const d3 = dist(ringTip,   pinkyTip)
+  const isPinching = d1 < 0.05 && d2 < 0.05 && d3 < 0.05
+
+  const palmOpen = indexUp && middleUp && ringUp && pinkyUp
+
+  // -------- CREAR FIGURA --------
+
+  if(!figureCreated){
+
+    const now = Date.now()
+    if(now - lastDeleteTime < CREATE_DELAY){
+      const remaining = Math.ceil((CREATE_DELAY-(now-lastDeleteTime))/1000)
+      setStatus("Espera " + remaining + "s para crear figura")
+      lastIndexX = null; lastIndexY = null
+      lastPalmX  = null; lastPalmY  = null
+      return
+    }
+
+    if(fingersUp === 2 && indexUp && middleUp){
+      createShape("cube");     setStatus("Cubo creado ✦ 2 dedos")
+    } else if(fingersUp === 1 && indexUp){
+      createShape("sphere");   setStatus("Esfera creada ✦ 1 dedo")
+    } else if(fingersUp === 3){
+      createShape("cone");     setStatus("Cono creado ✦ 3 dedos")
+    } else if(thumbUp && fingersUp === 0){
+      createShape("cylinder"); setStatus("Cilindro creado ✦ pulgar arriba")
+    }
+
+  // -------- CONTROLAR FIGURA --------
+
+  } else {
+
+    // ROTAR — palma abierta arrastrando
+    if(palmOpen && !isPinching){
+
+      if(lastPalmX !== null){
+        const dx = currentPalmX - lastPalmX
+        const dy = currentPalmY - lastPalmY
+
+        if(Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002){
+          currentObject.rotation.y += dx * 6
+          currentObject.rotation.x += dy * 6
+          setStatus("Rotando 🖐")
+          autoRotate = false
+          clearTimeout(autoRotateTimeout)
+          autoRotateTimeout = setTimeout(() => { autoRotate = true }, 2000)
+        } else {
+          // Palma quieta = zoom IN
+          zoomLevel = Math.max(1, zoomLevel - 0.1)
+          camera.position.z = zoomLevel
+          setStatus("Acercando")
+        }
+      }
+
+      lastPalmX  = currentPalmX
+      lastPalmY  = currentPalmY
+      lastIndexX = null
+      lastIndexY = null
+
+    // MOVER — solo índice
+    } else if(indexUp && !middleUp && !ringUp && !pinkyUp){
+
+      if(lastIndexX !== null){
+        currentObject.position.x += (currentIndexX - lastIndexX) * 5
+        currentObject.position.y -= (currentIndexY - lastIndexY) * 5
+        setStatus("Moviendo ☝️")
+      }
+
+      lastIndexX = currentIndexX
+      lastIndexY = currentIndexY
+      lastPalmX  = null
+      lastPalmY  = null
+
+    // ZOOM OUT — dedos juntos
+    } else if(isPinching){
+      zoomLevel = Math.min(15, zoomLevel + 0.1)
+      camera.position.z = zoomLevel
+      setStatus("Alejando 🤏")
+      lastPalmX = null; lastPalmY = null
+      lastIndexX = null; lastIndexY = null
+
+    // ELIMINAR — puño cerrado
+    } else if(fingersUp === 0 && !thumbUp){
+      const now = Date.now()
+      if(now - creationTime < DELETE_DELAY){
+        setStatus("Espera " + Math.ceil((DELETE_DELAY-(now-creationTime))/1000) + "s para eliminar ✊")
+      } else {
+        scene.remove(currentObject)
+        currentObject  = null
+        figureCreated  = false
+        lastDeleteTime = Date.now()
+        autoRotate     = true
+        setStatus("Figura eliminada")
+      }
+      lastPalmX = null; lastPalmY = null
+      lastIndexX = null; lastIndexY = null
+
+    } else {
+      lastPalmX  = null; lastPalmY  = null
+      lastIndexX = null; lastIndexY = null
+    }
+  }
+}
+
+// ---------------- RESULTADOS ----------------
+
+function onResults(results){
+  canvasCtx.save()
+  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height)
+  canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height)
+
+  if(!results.multiHandLandmarks || results.multiHandLandmarks.length === 0){
+    lastIndexX = null; lastIndexY = null
+    lastPalmX  = null; lastPalmY  = null
+    canvasCtx.restore()
+    return
+  }
+
+  for(const landmarks of results.multiHandLandmarks){
+    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS)
+    drawLandmarks(canvasCtx, landmarks)
+    detectGesture(landmarks)
+  }
+
+  canvasCtx.restore()
+}
+
+// ---------------- CONFIG MANOS ----------------
+
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+})
+
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 0,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.6
+})
+
+hands.onResults(onResults)
+
+const cam = new Camera(videoElement, {
+  onFrame: async () => { await hands.send({ image: videoElement }) },
+  width: 320, height: 240
+})
+
+cam.start()
+
+</script>
+</body>
+</html>
